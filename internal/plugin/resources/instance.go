@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -80,16 +81,26 @@ func ExtractInstancesStatus(
 	cluster *apiv1.Cluster,
 	config *rest.Config,
 	filteredPods []corev1.Pod,
+	timeout time.Duration,
 ) (postgres.PostgresqlStatusList, []error) {
 	result := postgres.PostgresqlStatusList{
 		IsReplicaCluster: cluster.IsReplica(),
 		CurrentPrimary:   cluster.Status.CurrentPrimary,
 	}
-	var errs []error
 
+	statuses := make([]postgres.PostgresqlStatus, len(filteredPods))
+	var wg sync.WaitGroup
+	wg.Add(len(filteredPods))
 	for idx := range filteredPods {
-		instanceStatus := getInstanceStatusFromPod(
-			ctx, config, filteredPods[idx])
+		go func(i int) {
+			defer wg.Done()
+			statuses[i] = getInstanceStatusFromPod(ctx, config, filteredPods[i], timeout)
+		}(idx)
+	}
+	wg.Wait()
+
+	var errs []error
+	for _, instanceStatus := range statuses {
 		result.Items = append(result.Items, instanceStatus)
 		if instanceStatus.Error != nil {
 			errs = append(errs, instanceStatus.Error)
@@ -103,8 +114,12 @@ func getInstanceStatusFromPod(
 	ctx context.Context,
 	config *rest.Config,
 	pod corev1.Pod,
+	timeout time.Duration,
 ) postgres.PostgresqlStatus {
 	var result postgres.PostgresqlStatus
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	statusResult, err := kubernetes.NewForConfigOrDie(config).
 		CoreV1().
@@ -116,7 +131,7 @@ func getInstanceStatusFromPod(
 			url.PathPgStatus,
 			nil,
 		).
-		DoRaw(ctx)
+		DoRaw(timeoutCtx)
 	if err != nil {
 		result.AddPod(pod)
 		result.Error = fmt.Errorf(

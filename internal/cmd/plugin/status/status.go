@@ -126,7 +126,7 @@ func Status(
 			clusterName, plugin.Namespace, err)
 	}
 
-	status := extractPostgresqlStatus(ctx, cluster)
+	status := extractPostgresqlStatus(ctx, cluster, timeout)
 	hibernated, _ := isHibernated(status)
 
 	err = plugin.Print(status, format, os.Stdout)
@@ -171,7 +171,7 @@ func Status(
 }
 
 // extractPostgresqlStatus gets the PostgreSQL status using the Kubernetes API
-func extractPostgresqlStatus(ctx context.Context, cluster apiv1.Cluster) *PostgresqlStatus {
+func extractPostgresqlStatus(ctx context.Context, cluster apiv1.Cluster, timeout time.Duration) *PostgresqlStatus {
 	var errs []error
 
 	managedPods, primaryPod, err := resources.GetInstancePods(ctx, cluster.Name)
@@ -185,6 +185,7 @@ func extractPostgresqlStatus(ctx context.Context, cluster apiv1.Cluster) *Postgr
 		&cluster,
 		plugin.Config,
 		managedPods,
+		timeout,
 	)
 	if len(errList) != 0 {
 		errs = append(errs, errList...)
